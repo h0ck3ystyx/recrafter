@@ -3,9 +3,17 @@ Content analysis and extraction for Recrafter
 """
 
 import re
-from typing import List, Dict, Any, Optional
+import json
+import hashlib
+from typing import List, Dict, Any, Optional, Tuple
 from bs4 import BeautifulSoup, Tag
 import logging
+from collections import defaultdict, Counter
+from difflib import SequenceMatcher
+import numpy as np
+from sklearn.cluster import DBSCAN
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from .models import Page, Component, PageMetadata, ContentModel
 from .config import AnalysisConfig
@@ -52,6 +60,22 @@ class ContentAnalyzer:
             ('tabs', 'tabs'),
             ('accordion', 'accordion')
         ]
+        
+        # Layout detection patterns
+        self.layout_patterns = {
+            'grid_system': [
+                r'container', r'row', r'col', r'grid', r'flex', r'flexbox',
+                r'bootstrap', r'foundation', r'material', r'semantic'
+            ],
+            'sections': [
+                r'hero', r'banner', r'header', r'footer', r'main', r'content',
+                r'sidebar', r'aside', r'navigation', r'breadcrumb'
+            ],
+            'components': [
+                r'card', r'tile', r'widget', r'panel', r'box', r'container',
+                r'wrapper', r'holder', r'block', r'section'
+            ]
+        }
     
     async def analyze_page(self, page: Page) -> None:
         """Analyze a page and extract components and metadata"""
@@ -71,6 +95,10 @@ class ContentAnalyzer:
                 page_type = self.identify_page_type(page, soup)
                 if page_type:
                     page.metadata.page_type = page_type
+            
+            # Extract layout information
+            if self.config.extract_layout_patterns:
+                page.layout_info = self.extract_layout_patterns(soup)
             
             self.logger.debug(f"Analyzed page: {page.url}")
             
@@ -354,6 +382,421 @@ class ContentAnalyzer:
             return 'form_page'
         
         return 'general_page'
+    
+    def extract_layout_patterns(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Extract layout patterns and CSS classes"""
+        layout_info = {
+            'grid_system': [],
+            'sections': [],
+            'components': [],
+            'css_framework': None,
+            'responsive_classes': [],
+            'layout_structure': {}
+        }
+        
+        # Extract all CSS classes
+        all_classes = set()
+        for element in soup.find_all(class_=True):
+            classes = element.get('class', [])
+            if isinstance(classes, str):
+                classes = [classes]
+            all_classes.update(classes)
+        
+        # Detect grid system
+        for pattern in self.layout_patterns['grid_system']:
+            regex = re.compile(pattern, re.IGNORECASE)
+            matching_classes = [cls for cls in all_classes if regex.search(cls)]
+            if matching_classes:
+                layout_info['grid_system'].extend(matching_classes)
+        
+        # Detect sections
+        for pattern in self.layout_patterns['sections']:
+            regex = re.compile(pattern, re.IGNORECASE)
+            matching_classes = [cls for cls in all_classes if regex.search(cls)]
+            if matching_classes:
+                layout_info['sections'].extend(matching_classes)
+        
+        # Detect components
+        for pattern in self.layout_patterns['components']:
+            regex = re.compile(pattern, re.IGNORECASE)
+            matching_classes = [cls for cls in all_classes if regex.search(cls)]
+            if matching_classes:
+                layout_info['components'].extend(matching_classes)
+        
+        # Detect CSS framework
+        framework_indicators = {
+            'bootstrap': ['container', 'row', 'col-', 'btn-', 'alert-'],
+            'foundation': ['grid-container', 'grid-x', 'cell'],
+            'material': ['mdl-', 'mdl-layout', 'mdl-card'],
+            'semantic': ['ui', 'ui-', 'ui-grid', 'ui-button']
+        }
+        
+        for framework, indicators in framework_indicators.items():
+            if any(indicator in ' '.join(all_classes) for indicator in indicators):
+                layout_info['css_framework'] = framework
+                break
+        
+        # Detect responsive classes
+        responsive_patterns = [r'sm-', r'md-', r'lg-', r'xl-', r'xs-', r'hidden-', r'visible-']
+        for pattern in responsive_patterns:
+            regex = re.compile(pattern, re.IGNORECASE)
+            responsive_classes = [cls for cls in all_classes if regex.search(cls)]
+            layout_info['responsive_classes'].extend(responsive_classes)
+        
+        # Analyze layout structure
+        layout_info['layout_structure'] = self._analyze_layout_structure(soup)
+        
+        return layout_info
+    
+    def _analyze_layout_structure(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Analyze the overall layout structure of the page"""
+        structure = {
+            'header_present': bool(soup.find(['header', 'nav'])),
+            'footer_present': bool(soup.find('footer')),
+            'sidebar_present': bool(soup.find(class_=re.compile(r'sidebar|aside|sidebar-', re.I))),
+            'main_content_areas': [],
+            'navigation_elements': [],
+            'form_elements': [],
+            'media_elements': []
+        }
+        
+        # Find main content areas
+        main_elements = soup.find_all(['main', 'article', 'section'])
+        for element in main_elements:
+            classes = element.get('class', [])
+            if isinstance(classes, str):
+                classes = [classes]
+            
+            content_info = {
+                'tag': element.name,
+                'classes': classes,
+                'id': element.get('id', ''),
+                'content_length': len(element.get_text(strip=True))
+            }
+            structure['main_content_areas'].append(content_info)
+        
+        # Find navigation elements
+        nav_elements = soup.find_all(['nav', 'ul', 'ol'])
+        for element in nav_elements:
+            if self._is_navigation_element(element):
+                nav_info = {
+                    'tag': element.name,
+                    'classes': element.get('class', []),
+                    'id': element.get('id', ''),
+                    'link_count': len(element.find_all('a'))
+                }
+                structure['navigation_elements'].append(nav_info)
+        
+        # Find form elements
+        forms = soup.find_all('form')
+        for form in forms:
+            form_info = {
+                'action': form.get('action', ''),
+                'method': form.get('method', 'get'),
+                'field_count': len(form.find_all(['input', 'textarea', 'select'])),
+                'classes': form.get('class', [])
+            }
+            structure['form_elements'].append(form_info)
+        
+        # Find media elements
+        media_elements = soup.find_all(['img', 'video', 'audio'])
+        for element in media_elements:
+            media_info = {
+                'tag': element.name,
+                'src': element.get('src', ''),
+                'alt': element.get('alt', ''),
+                'classes': element.get('class', [])
+            }
+            structure['media_elements'].append(media_info)
+        
+        return structure
+    
+    def cluster_pages_by_structure(self, pages: List[Page], similarity_threshold: float = 0.8) -> Dict[str, Any]:
+        """Cluster pages based on DOM structure similarity"""
+        if len(pages) < 2:
+            return {'clusters': [], 'similarity_matrix': [], 'recommendations': []}
+        
+        # Extract structural features for each page
+        page_features = []
+        for page in pages:
+            features = self._extract_structural_features(page)
+            page_features.append(features)
+        
+        # Calculate similarity matrix
+        similarity_matrix = self._calculate_similarity_matrix(page_features)
+        
+        # Cluster pages using DBSCAN
+        clustering = DBSCAN(eps=1-similarity_threshold, min_samples=2, metric='precomputed')
+        distance_matrix = 1 - similarity_matrix
+        cluster_labels = clustering.fit_predict(distance_matrix)
+        
+        # Group pages by cluster
+        clusters = defaultdict(list)
+        for i, label in enumerate(cluster_labels):
+            if label >= 0:  # Skip noise points
+                clusters[f"cluster_{label}"].append({
+                    'url': pages[i].url,
+                    'title': pages[i].title,
+                    'page_type': pages[i].metadata.page_type or 'unknown',
+                    'similarity_score': np.mean(similarity_matrix[i])
+                })
+        
+        # Generate recommendations
+        recommendations = self._generate_clustering_recommendations(clusters, similarity_matrix, pages)
+        
+        return {
+            'clusters': dict(clusters),
+            'similarity_matrix': similarity_matrix.tolist(),
+            'recommendations': recommendations,
+            'similarity_threshold': similarity_threshold,
+            'total_pages': len(pages),
+            'cluster_count': len(clusters)
+        }
+    
+    def _extract_structural_features(self, page: Page) -> Dict[str, Any]:
+        """Extract structural features from a page for similarity comparison"""
+        soup = BeautifulSoup(page.html_content, 'html.parser')
+        
+        features = {
+            'tag_structure': self._extract_tag_structure(soup),
+            'class_patterns': self._extract_class_patterns(soup),
+            'id_patterns': self._extract_id_patterns(soup),
+            'component_count': len(page.components),
+            'layout_signature': self._extract_layout_signature(soup),
+            'content_structure': self._extract_content_structure(soup)
+        }
+        
+        return features
+    
+    def _extract_tag_structure(self, soup: BeautifulSoup) -> Dict[str, int]:
+        """Extract tag frequency structure"""
+        tag_counts = Counter()
+        for tag in soup.find_all():
+            tag_counts[tag.name] += 1
+        return dict(tag_counts)
+    
+    def _extract_class_patterns(self, soup: BeautifulSoup) -> Dict[str, int]:
+        """Extract CSS class patterns"""
+        class_counts = Counter()
+        for element in soup.find_all(class_=True):
+            classes = element.get('class', [])
+            if isinstance(classes, str):
+                classes = [classes]
+            for cls in classes:
+                # Normalize class names
+                normalized = re.sub(r'[0-9]+', 'N', cls)
+                class_counts[normalized] += 1
+        return dict(class_counts)
+    
+    def _extract_id_patterns(self, soup: BeautifulSoup) -> Dict[str, int]:
+        """Extract ID patterns"""
+        id_counts = Counter()
+        for element in soup.find_all(id=True):
+            element_id = element.get('id', '')
+            # Normalize ID names
+            normalized = re.sub(r'[0-9]+', 'N', element_id)
+            id_counts[normalized] += 1
+        return dict(id_counts)
+    
+    def _extract_layout_signature(self, soup: BeautifulSoup) -> str:
+        """Extract a layout signature based on major structural elements"""
+        signature_parts = []
+        
+        # Check for major layout elements
+        if soup.find('header'):
+            signature_parts.append('H')
+        if soup.find('nav'):
+            signature_parts.append('N')
+        if soup.find('main'):
+            signature_parts.append('M')
+        if soup.find('aside'):
+            signature_parts.append('A')
+        if soup.find('footer'):
+            signature_parts.append('F')
+        
+        # Check for grid system
+        grid_elements = soup.find_all(class_=re.compile(r'container|row|col|grid', re.I))
+        if grid_elements:
+            signature_parts.append('G')
+        
+        # Check for forms
+        if soup.find('form'):
+            signature_parts.append('F')
+        
+        return ''.join(sorted(signature_parts))
+    
+    def _extract_content_structure(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Extract content structure information"""
+        content_info = {
+            'text_length': len(soup.get_text(strip=True)),
+            'heading_count': len(soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])),
+            'paragraph_count': len(soup.find_all('p')),
+            'link_count': len(soup.find_all('a')),
+            'image_count': len(soup.find_all('img')),
+            'list_count': len(soup.find_all(['ul', 'ol']))
+        }
+        return content_info
+    
+    def _calculate_similarity_matrix(self, page_features: List[Dict[str, Any]]) -> np.ndarray:
+        """Calculate similarity matrix between pages"""
+        n_pages = len(page_features)
+        similarity_matrix = np.zeros((n_pages, n_pages))
+        
+        for i in range(n_pages):
+            for j in range(i+1, n_pages):
+                similarity = self._calculate_page_similarity(page_features[i], page_features[j])
+                similarity_matrix[i][j] = similarity
+                similarity_matrix[j][i] = similarity
+        
+        # Set diagonal to 1.0
+        np.fill_diagonal(similarity_matrix, 1.0)
+        
+        return similarity_matrix
+    
+    def _calculate_page_similarity(self, features1: Dict[str, Any], features2: Dict[str, Any]) -> float:
+        """Calculate similarity between two pages based on their features"""
+        similarities = []
+        
+        # Tag structure similarity
+        tag_sim = self._calculate_dict_similarity(features1['tag_structure'], features2['tag_structure'])
+        similarities.append(tag_sim * 0.3)  # Weight: 30%
+        
+        # Class pattern similarity
+        class_sim = self._calculate_dict_similarity(features1['class_patterns'], features2['class_patterns'])
+        similarities.append(class_sim * 0.25)  # Weight: 25%
+        
+        # Layout signature similarity
+        layout_sim = 1.0 if features1['layout_signature'] == features2['layout_signature'] else 0.0
+        similarities.append(layout_sim * 0.2)  # Weight: 20%
+        
+        # Component count similarity
+        comp_sim = 1.0 - abs(features1['component_count'] - features2['component_count']) / max(features1['component_count'], features2['component_count'], 1)
+        similarities.append(comp_sim * 0.15)  # Weight: 15%
+        
+        # Content structure similarity
+        content_sim = self._calculate_content_similarity(features1['content_structure'], features2['content_structure'])
+        similarities.append(content_sim * 0.1)  # Weight: 10%
+        
+        return sum(similarities)
+    
+    def _calculate_dict_similarity(self, dict1: Dict[str, int], dict2: Dict[str, int]) -> float:
+        """Calculate similarity between two dictionaries based on key overlap and value similarity"""
+        if not dict1 and not dict2:
+            return 1.0
+        if not dict1 or not dict2:
+            return 0.0
+        
+        # Get all unique keys
+        all_keys = set(dict1.keys()) | set(dict2.keys())
+        
+        # Calculate Jaccard similarity for keys
+        key_similarity = len(set(dict1.keys()) & set(dict2.keys())) / len(all_keys)
+        
+        # Calculate value similarity for common keys
+        common_keys = set(dict1.keys()) & set(dict2.keys())
+        if not common_keys:
+            return key_similarity * 0.5
+        
+        value_similarities = []
+        for key in common_keys:
+            val1, val2 = dict1[key], dict2[key]
+            max_val = max(val1, val2)
+            if max_val == 0:
+                value_similarities.append(1.0)
+            else:
+                value_similarities.append(1.0 - abs(val1 - val2) / max_val)
+        
+        value_similarity = np.mean(value_similarities)
+        
+        # Combine key and value similarity
+        return key_similarity * 0.3 + value_similarity * 0.7
+    
+    def _calculate_content_similarity(self, content1: Dict[str, Any], content2: Dict[str, Any]) -> float:
+        """Calculate similarity between content structures"""
+        similarities = []
+        
+        for key in content1.keys():
+            if key in content2:
+                val1, val2 = content1[key], content2[key]
+                if isinstance(val1, (int, float)) and isinstance(val2, (int, float)):
+                    max_val = max(val1, val2)
+                    if max_val == 0:
+                        similarities.append(1.0)
+                    else:
+                        similarities.append(1.0 - abs(val1 - val2) / max_val)
+                else:
+                    similarities.append(1.0 if val1 == val2 else 0.0)
+            else:
+                similarities.append(0.0)
+        
+        return np.mean(similarities) if similarities else 0.0
+    
+    def _generate_clustering_recommendations(self, clusters: Dict, similarity_matrix: np.ndarray, pages: List[Page]) -> List[Dict[str, Any]]:
+        """Generate recommendations based on clustering results"""
+        recommendations = []
+        
+        for cluster_name, cluster_pages in clusters.items():
+            if len(cluster_pages) > 1:
+                # Calculate average similarity within cluster
+                cluster_urls = [page['url'] for page in cluster_pages]
+                cluster_indices = [i for i, page in enumerate(pages) if page.url in cluster_urls]
+                
+                if len(cluster_indices) > 1:
+                    cluster_similarities = []
+                    for i in cluster_indices:
+                        for j in cluster_indices:
+                            if i != j:
+                                cluster_similarities.append(similarity_matrix[i][j])
+                    
+                    avg_similarity = np.mean(cluster_similarities) if cluster_similarities else 0.0
+                    
+                    # Determine page types in cluster
+                    page_types = Counter(page['page_type'] for page in cluster_pages)
+                    dominant_type = page_types.most_common(1)[0][0] if page_types else 'unknown'
+                    
+                    recommendation = {
+                        'cluster': cluster_name,
+                        'page_count': len(cluster_pages),
+                        'average_similarity': round(avg_similarity, 3),
+                        'dominant_page_type': dominant_type,
+                        'recommendation': f"Create a single template for {dominant_type} pages with {len(cluster_pages)} variations",
+                        'template_suggestions': self._generate_template_suggestions(cluster_pages, dominant_type)
+                    }
+                    
+                    recommendations.append(recommendation)
+        
+        return recommendations
+    
+    def _generate_template_suggestions(self, cluster_pages: List[Dict], page_type: str) -> List[str]:
+        """Generate template suggestions for a cluster"""
+        suggestions = []
+        
+        if page_type == 'homepage':
+            suggestions.extend([
+                "Use a hero section with dynamic content",
+                "Implement a grid-based content layout",
+                "Add navigation and footer components"
+            ])
+        elif page_type == 'blog_post':
+            suggestions.extend([
+                "Create a content template with title, author, and body",
+                "Add related posts section",
+                "Include social sharing components"
+            ])
+        elif page_type == 'product_page':
+            suggestions.extend([
+                "Use a product image gallery component",
+                "Add product details and specifications",
+                "Include related products section"
+            ])
+        else:
+            suggestions.extend([
+                "Create a flexible content template",
+                "Add navigation and breadcrumb components",
+                "Include footer and social media links"
+            ])
+        
+        return suggestions
     
     def generate_content_models(self, pages: List[Page]) -> List[ContentModel]:
         """Generate content models from analyzed pages"""

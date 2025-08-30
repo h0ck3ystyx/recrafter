@@ -13,6 +13,8 @@ from .config import Config
 from .crawler import CrawlerEngine
 from .storage import StorageManager
 from .analyzer import ContentAnalyzer
+from .analysis_engine import AnalysisEngine
+from .export_engine import ExportEngine
 from .utils import setup_logging
 
 
@@ -92,9 +94,10 @@ def crawl(ctx, start_url, output_dir, max_depth, delay, max_concurrent,
 @cli.command()
 @click.option('--input-dir', '-i', required=True, help='Input directory with crawled data')
 @click.option('--output-file', '-o', help='Output file for analysis results')
+@click.option('--similarity-threshold', '-s', default=0.8, type=float, help='Similarity threshold for clustering (0.0-1.0)')
 @click.pass_context
-def analyze(ctx, input_dir, output_file):
-    """Analyze crawled data and generate reports"""
+def analyze(ctx, input_dir, output_file, similarity_threshold):
+    """Analyze crawled data and generate comprehensive reports"""
     logger = ctx.obj['logger']
     
     try:
@@ -102,10 +105,23 @@ def analyze(ctx, input_dir, output_file):
             logger.error(f"Input directory does not exist: {input_dir}")
             sys.exit(1)
         
-        logger.info(f"Analyzing crawled data in {input_dir}")
+        if not output_file:
+            output_file = os.path.join(input_dir, 'metadata', 'analysis_results.json')
         
-        # TODO: Implement analysis command
-        logger.info("Analysis completed")
+        logger.info(f"Starting comprehensive analysis of {input_dir}")
+        logger.info(f"Similarity threshold: {similarity_threshold}")
+        logger.info(f"Output file: {output_file}")
+        
+        # Create configuration
+        config = Config.default()
+        config.storage.output_dir = input_dir
+        
+        # Run analysis
+        analysis_engine = AnalysisEngine(config)
+        asyncio.run(analysis_engine.run_comprehensive_analysis(input_dir, output_file))
+        
+        logger.info("Analysis completed successfully!")
+        logger.info(f"Results saved to: {output_file}")
         
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
@@ -133,8 +149,16 @@ def export(ctx, input_dir, output_dir, format):
         logger.info(f"Exporting data from {input_dir} to {output_dir}")
         logger.info(f"Export format: {format}")
         
-        # TODO: Implement export command
-        logger.info("Export completed")
+        # Create configuration
+        config = Config.default()
+        config.storage.output_dir = input_dir
+        
+        # Run export
+        export_engine = ExportEngine(config)
+        result = asyncio.run(export_engine.export_data(input_dir, output_dir, format))
+        
+        logger.info("Export completed successfully!")
+        logger.info(f"Output: {result}")
         
     except Exception as e:
         logger.error(f"Export failed: {e}")

@@ -112,7 +112,7 @@ venv.bak/
 
 # Spyder project settings
 .spyderproject
-.spyderworkspace
+.spyproject
 
 # Rope project settings
 .ropeproject
@@ -129,8 +129,31 @@ dmypy.json
 .pyre/
 
 # Recrafter specific
+# Crawl output directories
 crawl_output/
+crawl_output_*/
+*_crawl/
+*_export/
 example_output/
+
+# Specific output directories (like tnlco)
+tnlco/
+tnlco_*/
+*_output/
+
+# Analysis results
+analysis_results.json
+analysis_results.yaml
+
+# CMS export packages
+crafter_cms_migration_*.zip
+
+# Logs
 *.log
-test_config.yaml
+logs/
+
+# Temporary files
+*.tmp
+*.temp
 .DS_Store
+Thumbs.db

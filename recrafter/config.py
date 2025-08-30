@@ -39,6 +39,7 @@ class AnalysisConfig:
     create_content_models: bool = True
     extract_metadata: bool = True
     identify_page_types: bool = True
+    extract_layout_patterns: bool = True
 
 
 @dataclass

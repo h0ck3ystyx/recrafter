@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse
 import logging
+from bs4 import BeautifulSoup
+from datetime import datetime
 
 from .models import Page, Asset, SiteMap, CrawlResult
 from .config import StorageConfig
@@ -295,3 +297,111 @@ class StorageManager:
         except Exception as e:
             self.logger.error(f"Failed to create backup: {e}")
             raise
+    
+    def load_crawled_data(self) -> Dict[str, Any]:
+        """Load all crawled data from storage for analysis"""
+        try:
+            data = {
+                'pages': [],
+                'assets': [],
+                'metadata': {},
+                'storage_info': self.get_storage_info()
+            }
+            
+            # Load metadata
+            metadata_files = ['sitemap.json', 'content_models.json', 'crawl_summary.json']
+            for filename in metadata_files:
+                metadata_path = self.metadata_dir / filename
+                if metadata_path.exists():
+                    try:
+                        with open(metadata_path, 'r', encoding='utf-8') as f:
+                            data['metadata'][filename.replace('.json', '')] = json.load(f)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to load {filename}: {e}")
+            
+            # Load pages
+            for html_file in self.pages_dir.rglob('*.html'):
+                try:
+                    page_data = self._load_page_from_file(html_file)
+                    if page_data:
+                        data['pages'].append(page_data)
+                except Exception as e:
+                    self.logger.warning(f"Failed to load page {html_file}: {e}")
+            
+            # Load assets info
+            for asset_dir in ['images', 'css', 'js', 'fonts', 'documents', 'other']:
+                asset_path = self.assets_dir / asset_dir
+                if asset_path.exists():
+                    for asset_file in asset_path.rglob('*'):
+                        if asset_file.is_file():
+                            try:
+                                asset_info = self._get_asset_info(asset_file, asset_dir)
+                                data['assets'].append(asset_info)
+                            except Exception as e:
+                                self.logger.warning(f"Failed to load asset info {asset_file}: {e}")
+            
+            self.logger.info(f"Loaded {len(data['pages'])} pages and {len(data['assets'])} assets")
+            return data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load crawled data: {e}")
+            return {}
+    
+    def _load_page_from_file(self, html_file: Path) -> Optional[Dict[str, Any]]:
+        """Load a single page from HTML file"""
+        try:
+            # Read HTML content
+            with open(html_file, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            
+            # Parse HTML to extract basic info
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Get title
+            title_tag = soup.find('title')
+            title = title_tag.get_text(strip=True) if title_tag else html_file.stem
+            
+            # Get URL from file path (approximate)
+            relative_path = html_file.relative_to(self.pages_dir)
+            url_path = str(relative_path).replace('\\', '/').replace('.html', '')
+            if url_path == 'index':
+                url_path = '/'
+            elif not url_path.startswith('/'):
+                url_path = f"/{url_path}"
+            
+            page_data = {
+                'url': url_path,
+                'local_path': str(html_file),
+                'title': title,
+                'html_content': html_content,
+                'depth': len(relative_path.parts) - 1,
+                'size': len(html_content),
+                'content_type': 'text/html',
+                'status_code': 200,
+                'crawled_at': datetime.fromtimestamp(html_file.stat().st_mtime).isoformat(),
+                'metadata': {},
+                'components': [],
+                'layout_info': None
+            }
+            
+            return page_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load page from {html_file}: {e}")
+            return None
+    
+    def _get_asset_info(self, asset_file: Path, asset_type: str) -> Dict[str, Any]:
+        """Get information about an asset file"""
+        try:
+            stat = asset_file.stat()
+            return {
+                'local_path': str(asset_file),
+                'asset_type': asset_type,
+                'filename': asset_file.name,
+                'size': stat.st_size,
+                'modified_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'extension': asset_file.suffix.lower()
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to get asset info for {asset_file}: {e}")
+            return {}

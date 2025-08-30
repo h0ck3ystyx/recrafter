@@ -79,6 +79,7 @@ class Page:
     links: List[Link] = field(default_factory=list)
     assets: List[Asset] = field(default_factory=list)
     components: List[Component] = field(default_factory=list)
+    layout_info: Optional[Dict[str, Any]] = None
     crawled_at: datetime = field(default_factory=datetime.now)
     status_code: int = 200
     content_type: str = "text/html"
