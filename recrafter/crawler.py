@@ -158,13 +158,16 @@ class CrawlerEngine:
                 
                 html_content = await response.text()
                 
+                # Debug: Log HTML content length
+                self.logger.debug(f"Downloaded HTML content length: {len(html_content)} characters")
+                
                 # Clean HTML if configured
                 if self.config.storage.clean_html:
                     html_content = clean_html_content(html_content)
                 
                 # Parse title
                 soup = BeautifulSoup(html_content, 'html.parser')
-                title = soup.title.string if soup.title else url
+                title = soup.title.get_text(strip=True) if soup.title else url
                 
                 # Create page object
                 page = Page(
@@ -187,24 +190,32 @@ class CrawlerEngine:
     
     async def _extract_links_and_assets(self, page: Page) -> tuple[List[Link], List[Asset]]:
         """Extract links and assets from HTML content"""
-        soup = BeautifulSoup(page.html_content, 'html.parser')
-        links = []
-        assets = []
+        try:
+            soup = BeautifulSoup(page.html_content, 'html.parser')
+            links = []
+            assets = []
+        except Exception as e:
+            self.logger.error(f"Failed to parse HTML for {page.url}: {e}")
+            return [], []
         
         # Extract links
-        for a_tag in soup.find_all('a', href=True):
-            href = a_tag.get('href')
-            if href:
-                normalized_url = normalize_url(href, page.url)
-                if is_valid_url(normalized_url):
-                    is_internal = is_same_domain(normalized_url, page.domain)
-                    link = Link(
-                        url=normalized_url,
-                        text=a_tag.get_text(strip=True),
-                        title=a_tag.get('title'),
-                        is_internal=is_internal
-                    )
-                    links.append(link)
+        try:
+            for a_tag in soup.find_all('a', href=True):
+                href = a_tag.get('href')
+                if href:
+                    normalized_url = normalize_url(href, page.url)
+                    if is_valid_url(normalized_url):
+                        is_internal = is_same_domain(normalized_url, page.domain)
+                        link = Link(
+                            url=normalized_url,
+                            text=a_tag.get_text(strip=True),
+                            title=a_tag.get('title'),
+                            is_internal=is_internal
+                        )
+                        links.append(link)
+        except Exception as e:
+            self.logger.error(f"Failed to extract links from {page.url}: {e}")
+            links = []
         
         # Extract assets
         asset_selectors = [
@@ -216,20 +227,24 @@ class CrawlerEngine:
             ('audio', 'src')
         ]
         
-        for tag_name, attr_name in asset_selectors:
-            for tag in soup.find_all(tag_name):
-                attr_value = tag.get(attr_name)
-                if attr_value:
-                    normalized_url = normalize_url(attr_value, page.url)
-                    if is_valid_url(normalized_url):
-                        asset = Asset(
-                            url=normalized_url,
-                            local_path=await self.storage.get_asset_path(normalized_url),
-                            content_type=self._guess_content_type(normalized_url),
-                            size=0,
-                            checksum=""
-                        )
-                        assets.append(asset)
+        try:
+            for element_tag, attr_name in asset_selectors:
+                for tag in soup.find_all(element_tag):
+                    attr_value = tag.get(attr_name)
+                    if attr_value:
+                        normalized_url = normalize_url(attr_value, page.url)
+                        if is_valid_url(normalized_url):
+                            asset = Asset(
+                                url=normalized_url,
+                                local_path=await self.storage.get_asset_path(normalized_url),
+                                content_type=self._guess_content_type(normalized_url),
+                                size=0,
+                                checksum=""
+                            )
+                            assets.append(asset)
+        except Exception as e:
+            self.logger.error(f"Failed to extract assets from {page.url}: {e}")
+            assets = []
         
         return links, assets
     
