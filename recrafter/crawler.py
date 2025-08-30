@@ -170,13 +170,22 @@ class CrawlerEngine:
                 title = soup.title.get_text(strip=True) if soup.title else url
                 
                 # Create page object
+                try:
+                    metadata = self.analyzer.extract_metadata(soup)
+                    self.logger.debug(f"Successfully extracted metadata for {url}")
+                except Exception as e:
+                    self.logger.error(f"Failed to extract metadata for {url}: {e}")
+                    # Create empty metadata as fallback
+                    from .models import PageMetadata
+                    metadata = PageMetadata()
+                
                 page = Page(
                     url=url,
                     local_path=await self.storage.get_page_path(url),
                     depth=depth,
                     title=title,
                     html_content=html_content,
-                    metadata=self.analyzer.extract_metadata(soup),
+                    metadata=metadata,
                     status_code=response.status,
                     content_type=content_type,
                     size=len(html_content.encode('utf-8'))

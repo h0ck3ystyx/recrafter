@@ -126,8 +126,8 @@ class ContentAnalyzer:
         components = []
         
         # Extract by tag patterns
-        for tag_name, component_type in self.component_patterns:
-            elements = soup.find_all(tag_name)
+        for element_tag, component_type in self.component_patterns:
+            elements = soup.find_all(element_tag)
             for element in elements:
                 component = self._create_component_from_element(element, component_type)
                 if component:
@@ -289,7 +289,9 @@ class ContentAnalyzer:
         components = []
         
         # Look for navigation elements
-        nav_elements = soup.find_all(['nav', 'ul', 'ol'])
+        nav_elements = []
+        for tag_name in ['nav', 'ul', 'ol']:
+            nav_elements.extend(soup.find_all(tag_name))
         
         for element in nav_elements:
             # Check if it looks like navigation
@@ -317,7 +319,9 @@ class ContentAnalyzer:
             return True
         
         # Check for navigation-related children
-        nav_children = element.find_all(['a', 'li'])
+        nav_children = []
+        for child_tag in ['a', 'li']:
+            nav_children.extend(element.find_all(child_tag))
         if len(nav_children) > 2:  # Likely navigation if many links
             return True
         
