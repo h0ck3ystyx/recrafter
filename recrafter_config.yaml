@@ -1,0 +1,49 @@
+# Recrafter Configuration File
+# This file contains all the configuration options for the Recrafter web crawler
+
+crawler:
+  # Crawling behavior
+  max_depth: 3                    # Maximum depth to crawl from starting URL
+  delay: 1.0                      # Delay between requests in seconds
+  max_concurrent: 5               # Maximum concurrent requests
+  user_agent: "Recrafter/1.0"    # User agent string for requests
+  respect_robots_txt: true        # Whether to respect robots.txt rules
+  timeout: 30                     # Request timeout in seconds
+  max_retries: 3                  # Maximum retry attempts for failed requests
+
+storage:
+  # File storage settings
+  output_dir: "./crawl_output"    # Output directory for crawled data
+  save_assets: true               # Whether to download and save assets
+  clean_html: false               # Whether to clean HTML content
+  create_backup: true             # Whether to create backups
+  max_file_size: 104857600        # Maximum file size in bytes (100MB)
+
+analysis:
+  # Content analysis options
+  extract_components: true        # Extract reusable components
+  generate_sitemap: true          # Generate sitemap
+  create_content_models: true     # Create content models for CMS
+  extract_metadata: true          # Extract page metadata
+  identify_page_types: true       # Identify page types automatically
+
+# Example custom settings for specific use cases:
+
+# For large sites (reduce load on server):
+# crawler:
+#   max_depth: 2
+#   delay: 2.0
+#   max_concurrent: 3
+
+# For development/testing (faster crawling):
+# crawler:
+#   max_depth: 1
+#   delay: 0.5
+#   max_concurrent: 10
+
+# For CMS migration focus:
+# analysis:
+#   extract_components: true
+#   create_content_models: true
+#   generate_sitemap: true
+#   extract_metadata: true
