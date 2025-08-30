@@ -64,6 +64,7 @@ class PageMetadata:
     canonical_url: Optional[str] = None
     og_tags: Dict[str, str] = field(default_factory=dict)
     twitter_tags: Dict[str, str] = field(default_factory=dict)
+    page_type: Optional[str] = None
 
 
 @dataclass

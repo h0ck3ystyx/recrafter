@@ -113,11 +113,13 @@ class ContentAnalyzer:
                 metadata.og_tags[property_name] = content
         
         # Twitter tags
-        for meta in soup.find_all('meta', name=re.compile(r'^twitter:')):
-            name = meta.get('name', '').replace('twitter:', '')
-            content = meta.get('content', '')
-            if name and content:
-                metadata.twitter_tags[name] = content
+        for meta in soup.find_all('meta'):
+            meta_name = meta.get('name', '')
+            if meta_name and meta_name.startswith('twitter:'):
+                name = meta_name.replace('twitter:', '')
+                content = meta.get('content', '')
+                if name and content:
+                    metadata.twitter_tags[name] = content
         
         return metadata
     
