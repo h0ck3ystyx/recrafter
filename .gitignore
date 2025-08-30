@@ -133,3 +133,4 @@ crawl_output/
 example_output/
 *.log
 test_config.yaml
+.DS_Store
