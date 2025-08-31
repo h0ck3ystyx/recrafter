@@ -202,27 +202,42 @@ class AnalysisEngine:
             # Convert to dictionaries for serialization
             model_dicts = []
             for model in content_models:
-                model_dict = {
-                    'name': model.name,
-                    'page_type': model.page_type,
-                    'description': model.description,
-                    'fields': [
-                        {
-                            'name': field.name,
-                            'type': field.type,
-                            'required': field.required,
-                            'description': field.description
+                # Check if model is already a dict or a ContentModel object
+                if isinstance(model, dict):
+                    self.logger.warning(f"Model is already a dict: {model}")
+                    model_dicts.append(model)
+                else:
+                    try:
+                        model_dict = {
+                            'name': model.name,
+                            'page_type': model.page_type,
+                            'description': model.description,
+                            'fields': model.fields,  # Fields are already in the correct format
+                            'sample_pages': model.sample_pages
                         }
-                        for field in model.fields
-                    ],
-                    'sample_pages': model.sample_pages
-                }
-                model_dicts.append(model_dict)
+                        model_dicts.append(model_dict)
+                    except AttributeError as attr_error:
+                        self.logger.error(f"Model object missing attribute: {attr_error}")
+                        self.logger.error(f"Model object: {model}")
+                        # Try to convert using to_dict method if available
+                        if hasattr(model, 'to_dict'):
+                            model_dicts.append(model.to_dict())
+                        else:
+                            # Fallback: create a basic dict
+                            model_dicts.append({
+                                'name': str(model),
+                                'page_type': 'unknown',
+                                'description': 'Error processing model',
+                                'fields': [],
+                                'sample_pages': []
+                            })
             
             return model_dicts
             
         except Exception as e:
             self.logger.error(f"Content model generation failed: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
     async def _analyze_layouts(self, pages: List[Page]) -> Dict[str, Any]:
